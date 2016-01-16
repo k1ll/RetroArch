@@ -22,5 +22,8 @@
      MAX_TOUCHES = 16
    };
    bool wayland_context_gettouchpos(unsigned id, unsigned* touch_x, unsigned* touch_y);
+   void wayland_context_getmousepos(int *mouse_x, int *mouse_y, int *mouse_abs_x, int *mouse_abs_y);
+   void wayland_context_getmousestate(int *mouse_l, int *mouse_r, int *mouse_m, int *mouse_wu, 
+                                      int *mouse_wd, int *mouse_wl, int *mouse_wr);
    bool wl_key_state[RETROK_LAST];
 #endif

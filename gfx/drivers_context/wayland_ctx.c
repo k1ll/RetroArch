@@ -29,6 +29,7 @@
 
 #include <sys/mman.h>
 
+#include <linux/input.h>
 #include <xkbcommon/xkbcommon.h>
 
 #include <wayland-client.h>
@@ -178,6 +179,44 @@ bool wayland_context_gettouchpos(unsigned id, unsigned* touch_x, unsigned* touch
   *touch_x = active_touch_positions[id].x;
   *touch_y = active_touch_positions[id].y;
   return active_touch_positions[id].active;
+}
+
+typedef struct mouse_state
+{
+   int x;
+   int y;
+   int abs_x;
+   int abs_y;
+   int l;
+   int r;
+   int m;
+   int wu;
+   int wd;
+   int wl;
+   int wr;
+} mouse_state_t;
+
+mouse_state_t mouse;
+
+//TODO: Sadly no support for relative mouse motions yet - mouse_x and mouse_y stay 0
+void wayland_context_getmousepos(int *mouse_x, int *mouse_y, int *mouse_abs_x, int *mouse_abs_y)
+{
+   *mouse_x = mouse.x;
+   *mouse_y = mouse.y;
+   *mouse_abs_x = mouse.abs_x;
+   *mouse_abs_y = mouse.abs_y;
+}
+
+void wayland_context_getmousestate(int *mouse_l, int *mouse_r, int *mouse_m, int *mouse_wu, 
+                                   int *mouse_wd, int *mouse_wl, int *mouse_wr)
+{
+   *mouse_l = mouse.l;
+   *mouse_r = mouse.r;
+   *mouse_m = mouse.m;
+   *mouse_wu = mouse.wu;
+   *mouse_wd = mouse.wd;
+   *mouse_wl = mouse.wl;
+   *mouse_wr = mouse.wr;
 }
 
 /* Shell surface callbacks. */
@@ -869,6 +908,18 @@ static void *gfx_ctx_wl_init(void *video_driver)
       default:
          break;
    }
+
+   mouse.x = 0;
+   mouse.y = 0;
+   mouse.abs_x = 0;
+   mouse.abs_y = 0;
+   mouse.l = 0;
+   mouse.r = 0;
+   mouse.m = 0;
+   mouse.wu = 0;
+   mouse.wd = 0;
+   mouse.wl = 0;
+   mouse.wr = 0;
 
    num_active_touches = 0;
 
@@ -1611,7 +1662,9 @@ struct wl_surface* surface,
 wl_fixed_t sx,
 wl_fixed_t sy)
 {
-   /* TODO */
+   mouse.abs_x = wl_fixed_to_int(sx);
+   mouse.abs_y = wl_fixed_to_int(sy);
+   wl_pointer_set_cursor(pointer, serial, NULL, 0, 0);
 }
 
 static void pointer_handle_leave(void* data,
@@ -1619,7 +1672,7 @@ struct wl_pointer* pointer,
 uint32_t serial,
 struct wl_surface* surface)
 {
-   /* TODO */
+   /* Nothing to do here */
 }
 
 static void pointer_handle_motion(void* data,
@@ -1628,7 +1681,8 @@ uint32_t time,
 wl_fixed_t sx,
 wl_fixed_t sy)
 {
-   /* TODO */
+   mouse.abs_x = wl_fixed_to_int(sx);
+   mouse.abs_y = wl_fixed_to_int(sy);
 }
 
 static void pointer_handle_button(void* data,
@@ -1638,7 +1692,30 @@ uint32_t time,
 uint32_t button,
 uint32_t state)
 {
-   /* TODO */
+   int pressed;
+
+   switch(state)
+   {
+      case WL_POINTER_BUTTON_STATE_RELEASED:
+         pressed = 0;
+         break;
+      case WL_POINTER_BUTTON_STATE_PRESSED:
+         pressed = 1;
+         break;
+   }
+
+   switch(button)
+   {
+      case BTN_LEFT:
+         mouse.l = pressed;
+         break;
+      case BTN_RIGHT:
+         mouse.r = pressed;
+         break;
+      case BTN_MIDDLE:
+         mouse.m = pressed;
+         break;
+   }
 }
 
 static void pointer_handle_axis(void* data,
@@ -1647,7 +1724,33 @@ uint32_t time,
 uint32_t axis,
 wl_fixed_t value)
 {
-   /* TODO */
+   switch(axis)
+   {
+      case WL_POINTER_AXIS_VERTICAL_SCROLL:
+	 if(wl_fixed_to_int(value) < 0)
+	 {
+	    mouse.wu = 1;
+	    mouse.wd = 0;
+	 }
+	 else
+	 {
+	    mouse.wu = 0;
+	    mouse.wd = 1;
+	 }
+         break;
+      case WL_POINTER_AXIS_HORIZONTAL_SCROLL:
+	 if(wl_fixed_to_int(value) < 0)
+	 {
+	    mouse.wr = 1;
+	    mouse.wl = 0;
+	 }
+	 else
+	 {
+	    mouse.wr = 0;
+	    mouse.wl = 1;
+	 }
+         break;
+   }
 }
 
 

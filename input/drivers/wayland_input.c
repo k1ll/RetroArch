@@ -293,6 +293,9 @@ static const input_device_driver_t *wayland_get_joypad_driver(void *data)
 
 static void wayland_poll_mouse(wayland_input_t *wayland)
 {
+   wayland_context_getmousepos(&wayland->mouse_x, &wayland->mouse_y, &wayland->mouse_abs_x, &wayland->mouse_abs_y);
+   wayland_context_getmousestate(&wayland->mouse_l, &wayland->mouse_r, &wayland->mouse_m, &wayland->mouse_wu, 
+                                 &wayland->mouse_wd, &wayland->mouse_wl, &wayland->mouse_wr);
 }
 
 static void wayland_poll_touch(wayland_input_t *wayland)
