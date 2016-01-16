@@ -1260,7 +1260,7 @@ struct wl_seat *seat, unsigned caps)
    if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !input->keyboard)
    {
       input->keyboard = wl_seat_get_keyboard(seat);
-      wl_keyboard_add_listener(input->keyboard, &keyboard_listener, NULL);
+      wl_keyboard_add_listener(input->keyboard, &keyboard_listener, input);
    }
    else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && input->keyboard)
    {
@@ -1270,7 +1270,7 @@ struct wl_seat *seat, unsigned caps)
    if ((caps & WL_SEAT_CAPABILITY_POINTER) && !input->pointer)
    {
       input->pointer = wl_seat_get_pointer(seat);
-      wl_pointer_add_listener(input->pointer, &pointer_listener, NULL);
+      wl_pointer_add_listener(input->pointer, &pointer_listener, input);
    }
    else if (!(caps & WL_SEAT_CAPABILITY_POINTER) && input->pointer)
    {
