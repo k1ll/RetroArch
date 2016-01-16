@@ -27,6 +27,10 @@
 #include <unistd.h>
 #include <signal.h>
 
+#include <sys/mman.h>
+
+#include <xkbcommon/xkbcommon.h>
+
 #include <wayland-client.h>
 #ifdef HAVE_EGL
 #include <wayland-egl.h>
@@ -76,6 +80,8 @@ typedef struct gfx_ctx_vulkan_data
 } gfx_ctx_vulkan_data_t;
 #endif
 
+#include "wayland_ctx.h"
+
 typedef struct gfx_ctx_wayland_data
 {
 
@@ -118,6 +124,14 @@ typedef struct wayland_input
    struct wl_seat *seat;
    struct wl_keyboard *keyboard;
    struct wl_pointer  *pointer;
+   struct xkb_context *xkb_context;
+   struct {
+           struct xkb_keymap *keymap;
+           struct xkb_state *state;
+           /*xkb_mod_mask_t control_mask;
+           xkb_mod_mask_t alt_mask;
+           xkb_mod_mask_t shift_mask;*/
+   } xkb;
 
    struct wl_list link;
 } wayland_input_t;
@@ -188,6 +202,10 @@ static const struct wl_seat_listener seat_listener;
 wayland_input_t *input_init()
 {
    wayland_input_t *input = (wayland_input_t*)calloc(1, sizeof(wayland_input_t));
+   input->xkb_context = xkb_context_new(0);
+   if (input->xkb_context == NULL) {
+      RARCH_ERR("[Wayland] Failed to create XKB context\n");
+   }
 
    return input;
 }
@@ -259,6 +277,11 @@ static void input_destroy(wayland_input_t *input)
       wl_pointer_destroy(input->pointer);
    if (input->keyboard)
       wl_keyboard_destroy(input->keyboard);
+
+   xkb_state_unref(input->xkb.state);
+   xkb_keymap_unref(input->xkb.keymap);
+
+   xkb_context_unref(input->xkb_context);
 
    wl_list_remove(&input->link);
    wl_seat_destroy(input->seat);
@@ -1148,7 +1171,52 @@ uint32_t format,
 int fd,
 uint32_t size)
 {
-   /* TODO */
+   wayland_input_t *input = (wayland_input_t*)data;
+
+   if (format == WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP)
+      RARCH_ERR("[Wayland]: No Keyboard Keymap Format\n");
+   if (format == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1)
+   {
+      RARCH_LOG("[Wayland]: XKB v1 Keyboard Keymap Format\n");
+      struct xkb_keymap *keymap;
+      struct xkb_state *state;
+      char *map_str;
+
+      if (!input) {
+        close(fd);
+        return;
+      }
+
+      map_str = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+      if (map_str == MAP_FAILED) {
+        close(fd);
+        return;
+      }
+
+      keymap = xkb_keymap_new_from_string(input->xkb_context,
+                                          map_str,
+                                          XKB_KEYMAP_FORMAT_TEXT_V1,
+                                          0);
+      munmap(map_str, size);
+      close(fd);
+
+      if (!keymap) {
+        RARCH_ERR("[Wayland]: Failed to compile keymap\n");
+        return;
+      }
+
+      state = xkb_state_new(keymap);
+      if (!state) {
+        RARCH_ERR("[Wayland]: Failed to create XKB state\n");
+        xkb_keymap_unref(keymap);
+        return;
+      }
+
+      xkb_keymap_unref(input->xkb.keymap);
+      xkb_state_unref(input->xkb.state);
+      input->xkb.keymap = keymap;
+      input->xkb.state = state;
+   }
 }
 
 static void keyboard_handle_enter(void* data,
@@ -1175,7 +1243,312 @@ uint32_t time,
 uint32_t key,
 uint32_t state)
 {
-   /* TODO */
+   // Only handling xkb v1 compatible format atm
+   uint32_t code, num_syms;
+   const xkb_keysym_t *syms;
+   xkb_keysym_t sym;
+   bool pressed;
+   wayland_input_t *input = (wayland_input_t*)data;
+
+   code = key + 8;
+   if (!input->xkb.state)
+      return;
+
+   num_syms = xkb_state_key_get_syms(input->xkb.state, code, &syms);
+
+   sym = XKB_KEY_NoSymbol;
+   if (num_syms == 1)
+      sym = syms[0];
+
+   //TODO: Textinput
+   //char text[16];
+   //xkb_keysym_to_utf8(sym, text, sizeof(text)) <= 0
+
+   if (state == WL_KEYBOARD_KEY_STATE_PRESSED)
+   {
+      pressed = true;
+      //RARCH_LOG("[WL]: Key Press %lu\n", key);
+      //RARCH_LOG("[WL]: Key Press (HEX xkb) %x\n", key+8L);
+   }
+   if (state == WL_KEYBOARD_KEY_STATE_RELEASED)
+   {
+     pressed = false;
+     //RARCH_LOG("[WL]: Key Release %lu\n", key);
+   }
+
+   //TODO: Find missing Key equivalents
+   /*if (sym == XKB_KEY_)
+     wl_key_state[RETROK_FIRST] = pressed;
+   else*/ if (sym == XKB_KEY_BackSpace)
+     wl_key_state[RETROK_BACKSPACE] = pressed;
+   else if (sym == XKB_KEY_Tab)
+     wl_key_state[RETROK_TAB] = pressed;
+   else if (sym == XKB_KEY_Clear)
+     wl_key_state[RETROK_CLEAR] = pressed;
+   else if (sym == XKB_KEY_Return)
+     wl_key_state[RETROK_RETURN] = pressed;
+   else if (sym == XKB_KEY_Pause)
+     wl_key_state[RETROK_PAUSE] = pressed;
+   else if (sym == XKB_KEY_Escape)
+     wl_key_state[RETROK_ESCAPE] = pressed;
+   else if (sym == XKB_KEY_space)
+     wl_key_state[RETROK_SPACE] = pressed;
+   else if (sym == XKB_KEY_exclam)
+     wl_key_state[RETROK_EXCLAIM] = pressed;
+   else if (sym == XKB_KEY_quotedbl)
+     wl_key_state[RETROK_QUOTEDBL] = pressed;
+   else if (sym == XKB_KEY_numbersign)
+     wl_key_state[RETROK_HASH] = pressed;
+   else if (sym == XKB_KEY_dollar)
+     wl_key_state[RETROK_DOLLAR] = pressed;
+   else if (sym == XKB_KEY_ampersand)
+     wl_key_state[RETROK_AMPERSAND] = pressed;
+   else if (sym == XKB_KEY_leftsinglequotemark)
+     wl_key_state[RETROK_QUOTE] = pressed;
+   else if (sym == XKB_KEY_parenleft)
+     wl_key_state[RETROK_LEFTPAREN] = pressed;
+   else if (sym == XKB_KEY_parenright)
+     wl_key_state[RETROK_RIGHTPAREN] = pressed;
+   else if (sym == XKB_KEY_asterisk)
+     wl_key_state[RETROK_ASTERISK] = pressed;
+   else if (sym == XKB_KEY_plus)
+     wl_key_state[RETROK_PLUS] = pressed;
+   else if (sym == XKB_KEY_comma)
+     wl_key_state[RETROK_COMMA] = pressed;
+   else if (sym == XKB_KEY_minus)
+     wl_key_state[RETROK_MINUS] = pressed;
+   else if (sym == XKB_KEY_period)
+     wl_key_state[RETROK_PERIOD] = pressed;
+   else if (sym == XKB_KEY_slash)
+     wl_key_state[RETROK_SLASH] = pressed;
+   else if (sym == XKB_KEY_0)
+     wl_key_state[RETROK_0] = pressed;
+   else if (sym == XKB_KEY_1)
+     wl_key_state[RETROK_1] = pressed;
+   else if (sym == XKB_KEY_2)
+     wl_key_state[RETROK_2] = pressed;
+   else if (sym == XKB_KEY_3)
+     wl_key_state[RETROK_3] = pressed;
+   else if (sym == XKB_KEY_4)
+     wl_key_state[RETROK_4] = pressed;
+   else if (sym == XKB_KEY_5)
+     wl_key_state[RETROK_5] = pressed;
+   else if (sym == XKB_KEY_5)
+     wl_key_state[RETROK_6] = pressed;
+   else if (sym == XKB_KEY_7)
+     wl_key_state[RETROK_7] = pressed;
+   else if (sym == XKB_KEY_8)
+     wl_key_state[RETROK_8] = pressed;
+   else if (sym == XKB_KEY_9)
+     wl_key_state[RETROK_9] = pressed;
+   else if (sym == XKB_KEY_colon)
+     wl_key_state[RETROK_COLON] = pressed;
+   else if (sym == XKB_KEY_semicolon)
+     wl_key_state[RETROK_SEMICOLON] = pressed;
+   else if (sym == XKB_KEY_less)
+     wl_key_state[RETROK_LESS] = pressed;
+   else if (sym == XKB_KEY_equal)
+     wl_key_state[RETROK_EQUALS] = pressed;
+   else if (sym == XKB_KEY_greater)
+     wl_key_state[RETROK_GREATER] = pressed;
+   else if (sym == XKB_KEY_question)
+     wl_key_state[RETROK_QUESTION] = pressed;
+   else if (sym == XKB_KEY_at)
+     wl_key_state[RETROK_AT] = pressed;
+   else if (sym == XKB_KEY_bracketleft)
+     wl_key_state[RETROK_LEFTBRACKET] = pressed;
+   else if (sym == XKB_KEY_backslash)
+     wl_key_state[RETROK_BACKSLASH] = pressed;
+   else if (sym == XKB_KEY_bracketright)
+     wl_key_state[RETROK_RIGHTBRACKET] = pressed;
+   else if (sym == XKB_KEY_asciicircum)
+     wl_key_state[RETROK_CARET] = pressed;
+   else if (sym == XKB_KEY_underscore)
+     wl_key_state[RETROK_UNDERSCORE] = pressed;
+   else if (sym == XKB_KEY_grave)
+     wl_key_state[RETROK_BACKQUOTE] = pressed;
+   else if (sym == XKB_KEY_a)
+     wl_key_state[RETROK_a] = pressed;
+   else if (sym == XKB_KEY_b)
+     wl_key_state[RETROK_b] = pressed;
+   else if (sym == XKB_KEY_c)
+     wl_key_state[RETROK_c] = pressed;
+   else if (sym == XKB_KEY_d)
+     wl_key_state[RETROK_d] = pressed;
+   else if (sym == XKB_KEY_e)
+     wl_key_state[RETROK_e] = pressed;
+   else if (sym == XKB_KEY_f)
+     wl_key_state[RETROK_f] = pressed;
+   else if (sym == XKB_KEY_g)
+     wl_key_state[RETROK_g] = pressed;
+   else if (sym == XKB_KEY_h)
+     wl_key_state[RETROK_h] = pressed;
+   else if (sym == XKB_KEY_i)
+     wl_key_state[RETROK_i] = pressed;
+   else if (sym == XKB_KEY_j)
+     wl_key_state[RETROK_j] = pressed;
+   else if (sym == XKB_KEY_k)
+     wl_key_state[RETROK_k] = pressed;
+   else if (sym == XKB_KEY_l)
+     wl_key_state[RETROK_l] = pressed;
+   else if (sym == XKB_KEY_m)
+     wl_key_state[RETROK_m] = pressed;
+   else if (sym == XKB_KEY_n)
+     wl_key_state[RETROK_n] = pressed;
+   else if (sym == XKB_KEY_o)
+     wl_key_state[RETROK_o] = pressed;
+   else if (sym == XKB_KEY_p)
+     wl_key_state[RETROK_p] = pressed;
+   else if (sym == XKB_KEY_q)
+     wl_key_state[RETROK_q] = pressed;
+   else if (sym == XKB_KEY_r)
+     wl_key_state[RETROK_r] = pressed;
+   else if (sym == XKB_KEY_s)
+     wl_key_state[RETROK_s] = pressed;
+   else if (sym == XKB_KEY_t)
+     wl_key_state[RETROK_t] = pressed;
+   else if (sym == XKB_KEY_u)
+     wl_key_state[RETROK_u] = pressed;
+   else if (sym == XKB_KEY_v)
+     wl_key_state[RETROK_v] = pressed;
+   else if (sym == XKB_KEY_w)
+     wl_key_state[RETROK_w] = pressed;
+   else if (sym == XKB_KEY_x)
+     wl_key_state[RETROK_x] = pressed;
+   else if (sym == XKB_KEY_y)
+     wl_key_state[RETROK_y] = pressed;
+   else if (sym == XKB_KEY_z)
+     wl_key_state[RETROK_z] = pressed;
+   else if (sym == XKB_KEY_Delete)
+     wl_key_state[RETROK_DELETE] = pressed;
+   else if (sym == XKB_KEY_KP_0)
+     wl_key_state[RETROK_KP0] = pressed;
+   else if (sym == XKB_KEY_KP_1)
+     wl_key_state[RETROK_KP1] = pressed;
+   else if (sym == XKB_KEY_KP_2)
+     wl_key_state[RETROK_KP2] = pressed;
+   else if (sym == XKB_KEY_KP_3)
+     wl_key_state[RETROK_KP3] = pressed;
+   else if (sym == XKB_KEY_KP_4)
+     wl_key_state[RETROK_KP4] = pressed;
+   else if (sym == XKB_KEY_KP_5)
+     wl_key_state[RETROK_KP5] = pressed;
+   else if (sym == XKB_KEY_KP_6)
+     wl_key_state[RETROK_KP6] = pressed;
+   else if (sym == XKB_KEY_KP_7)
+     wl_key_state[RETROK_KP7] = pressed;
+   else if (sym == XKB_KEY_KP_8)
+     wl_key_state[RETROK_KP8] = pressed;
+   else if (sym == XKB_KEY_KP_9)
+     wl_key_state[RETROK_KP9] = pressed;
+   else if (sym == XKB_KEY_KP_Separator)
+     wl_key_state[RETROK_KP_PERIOD] = pressed;
+   else if (sym == XKB_KEY_KP_Divide)
+     wl_key_state[RETROK_KP_DIVIDE] = pressed;
+   else if (sym == XKB_KEY_KP_Multiply)
+     wl_key_state[RETROK_KP_MULTIPLY] = pressed;
+   else if (sym == XKB_KEY_KP_Subtract)
+     wl_key_state[RETROK_KP_MINUS] = pressed;
+   else if (sym == XKB_KEY_KP_Add)
+     wl_key_state[RETROK_KP_PLUS] = pressed;
+   else if (sym == XKB_KEY_KP_Enter)
+     wl_key_state[RETROK_KP_ENTER] = pressed;
+   else if (sym == XKB_KEY_KP_Equal)
+     wl_key_state[RETROK_KP_EQUALS] = pressed;
+   else if (sym == XKB_KEY_Up)
+     wl_key_state[RETROK_UP] = pressed;
+   else if (sym == XKB_KEY_Down)
+     wl_key_state[RETROK_DOWN] = pressed;
+   else if (sym == XKB_KEY_Right)
+     wl_key_state[RETROK_RIGHT] = pressed;
+   else if (sym == XKB_KEY_Left)
+     wl_key_state[RETROK_LEFT] = pressed;
+   else if (sym == XKB_KEY_Insert)
+     wl_key_state[RETROK_INSERT] = pressed;
+   else if (sym == XKB_KEY_Home)
+     wl_key_state[RETROK_HOME] = pressed;
+   else if (sym == XKB_KEY_End)
+     wl_key_state[RETROK_END] = pressed;
+   else if (sym == XKB_KEY_Page_Up)
+     wl_key_state[RETROK_PAGEUP] = pressed;
+   else if (sym == XKB_KEY_Page_Down)
+     wl_key_state[RETROK_PAGEDOWN] = pressed;
+   else if (sym == XKB_KEY_F1)
+     wl_key_state[RETROK_F1] = pressed;
+   else if (sym == XKB_KEY_F2)
+     wl_key_state[RETROK_F2] = pressed;
+   else if (sym == XKB_KEY_F3)
+     wl_key_state[RETROK_F3] = pressed;
+   else if (sym == XKB_KEY_F4)
+     wl_key_state[RETROK_F4] = pressed;
+   else if (sym == XKB_KEY_F5)
+     wl_key_state[RETROK_F5] = pressed;
+   else if (sym == XKB_KEY_F6)
+     wl_key_state[RETROK_F6] = pressed;
+   else if (sym == XKB_KEY_F7)
+     wl_key_state[RETROK_F7] = pressed;
+   else if (sym == XKB_KEY_F8)
+     wl_key_state[RETROK_F8] = pressed;
+   else if (sym == XKB_KEY_F9)
+     wl_key_state[RETROK_F9] = pressed;
+   else if (sym == XKB_KEY_F10)
+     wl_key_state[RETROK_F10] = pressed;
+   else if (sym == XKB_KEY_F11)
+     wl_key_state[RETROK_F11] = pressed;
+   else if (sym == XKB_KEY_F12)
+     wl_key_state[RETROK_F12] = pressed;
+   else if (sym == XKB_KEY_F13)
+     wl_key_state[RETROK_F13] = pressed;
+   else if (sym == XKB_KEY_F14)
+     wl_key_state[RETROK_F14] = pressed;
+   else if (sym == XKB_KEY_F15)
+     wl_key_state[RETROK_F15] = pressed;
+   else if (sym == XKB_KEY_Num_Lock)
+     wl_key_state[RETROK_NUMLOCK] = pressed;
+   else if (sym == XKB_KEY_Caps_Lock)
+     wl_key_state[RETROK_CAPSLOCK] = pressed;
+   else if (sym == XKB_KEY_Scroll_Lock)
+     wl_key_state[RETROK_SCROLLOCK] = pressed;
+   else if (sym == XKB_KEY_Shift_R)
+     wl_key_state[RETROK_RSHIFT] = pressed;
+   else if (sym == XKB_KEY_Shift_L)
+     wl_key_state[RETROK_LSHIFT] = pressed;
+   else if (sym == XKB_KEY_Control_R)
+     wl_key_state[RETROK_RCTRL] = pressed;
+   else if (sym == XKB_KEY_Control_L)
+     wl_key_state[RETROK_LCTRL] = pressed;
+   else if (sym == XKB_KEY_Alt_R)
+     wl_key_state[RETROK_RALT] = pressed;
+   else if (sym == XKB_KEY_Alt_L)
+     wl_key_state[RETROK_LALT] = pressed;
+   else if (sym == XKB_KEY_Meta_R)
+     wl_key_state[RETROK_RMETA] = pressed;
+   else if (sym == XKB_KEY_Meta_L)
+     wl_key_state[RETROK_LMETA] = pressed;
+   else if (sym == XKB_KEY_Super_L)
+     wl_key_state[RETROK_LSUPER] = pressed;
+   else if (sym == XKB_KEY_Super_R)
+     wl_key_state[RETROK_RSUPER] = pressed;
+   else if (sym == XKB_KEY_Mode_switch)
+     wl_key_state[RETROK_MODE] = pressed;
+   /*else if (sym == XKB_KEY_) 
+     wl_key_state[RETROK_COMPOSE] = pressed;*/
+   else if (sym == XKB_KEY_Help)
+     wl_key_state[RETROK_HELP] = pressed;
+   else if (sym == XKB_KEY_Print)
+     wl_key_state[RETROK_PRINT] = pressed;
+   else if (sym == XKB_KEY_Sys_Req)
+     wl_key_state[RETROK_SYSREQ] = pressed;
+   else if (sym == XKB_KEY_Break)
+     wl_key_state[RETROK_BREAK] = pressed;
+   else if (sym == XKB_KEY_Menu)
+     wl_key_state[RETROK_MENU] = pressed;
+   /*else if (sym == XKB_KEY_Power)
+     wl_key_state[RETROK_POWER] = pressed;*/
+   /*else if (sym == XKB_KEY_)
+     wl_key_state[RETROK_EURO] = pressed;*/
+   else if (sym == XKB_KEY_Undo)
+     wl_key_state[RETROK_UNDO] = pressed;
 }
 
 static void keyboard_handle_modifiers(void* data,
