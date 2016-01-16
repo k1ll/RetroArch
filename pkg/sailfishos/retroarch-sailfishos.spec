@@ -51,6 +51,11 @@ sed -i \
    s|^# input_driver.*|input_driver = "wayland"|' \
   %{buildroot}/etc/retroarch.cfg
 
+#Disabling audio till it's fixed
+sed -i \
+   's|^# audio_enable.*|audio_enable = "false"|' \
+  %{buildroot}/etc/retroarch.cfg
+
 sed -i \
   's|^Exec=retroarch|Exec=retroarch --menu|' \
   %{buildroot}/usr/share/applications/retroarch.desktop
