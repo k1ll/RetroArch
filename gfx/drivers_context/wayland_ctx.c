@@ -31,6 +31,7 @@
 #ifdef HAVE_EGL
 #include <wayland-egl.h>
 #endif
+#include <wayland-util.h>
 
 #include <string/stdstring.h>
 
@@ -101,6 +102,7 @@ typedef struct gfx_ctx_wayland_data
 #ifdef HAVE_VULKAN
    gfx_ctx_vulkan_data_t vk;
 #endif
+   struct wl_list input_list;
 } gfx_ctx_wayland_data_t;
 
 #ifdef HAVE_VULKAN
@@ -110,6 +112,15 @@ static bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
 #endif
 
 static enum gfx_ctx_api wl_api;
+
+typedef struct wayland_input
+{
+   struct wl_seat *seat;
+   struct wl_keyboard *keyboard;
+   struct wl_pointer  *pointer;
+
+   struct wl_list link;
+} wayland_input_t;
 
 #ifndef EGL_OPENGL_ES3_BIT_KHR
 #define EGL_OPENGL_ES3_BIT_KHR 0x0040
@@ -171,6 +182,16 @@ static const struct wl_shell_surface_listener shell_surface_listener = {
    shell_surface_handle_popup_done,
 };
 
+//TODO: Just move the function definitions here?
+static const struct wl_seat_listener seat_listener;
+
+wayland_input_t *input_init()
+{
+   wayland_input_t *input = (wayland_input_t*)calloc(1, sizeof(wayland_input_t));
+
+   return input;
+}
+
 /* Registry callbacks. */
 static void registry_handle_global(void *data, struct wl_registry *reg,
       uint32_t id, const char *interface, uint32_t version)
@@ -201,6 +222,14 @@ static void registry_handle_global(void *data, struct wl_registry *reg,
    }
    else if (string_is_equal(interface, "wl_shell"))
       wl->shell = (struct wl_shell*)wl_registry_bind(reg, id, &wl_shell_interface, 1);
+   else if (string_is_equal(interface, "wl_seat"))
+   {
+      wayland_input_t *input = input_init();
+      wl_list_insert(&wl->input_list, &input->link);
+      input->seat = (struct wl_seat*)wl_registry_bind(reg, id, &wl_seat_interface, 1);
+      wl_seat_add_listener(input->seat, &seat_listener, input);
+      wl_seat_set_user_data(input->seat, input);
+   }
 }
 
 static void registry_handle_global_remove(void *data,
@@ -220,6 +249,35 @@ static const struct wl_registry_listener registry_listener = {
 
 static void gfx_ctx_wl_get_video_size(void *data,
       unsigned *width, unsigned *height);
+
+static void input_destroy(wayland_input_t *input)
+{
+   if (!input)
+      return;
+
+   if (input->pointer)
+      wl_pointer_destroy(input->pointer);
+   if (input->keyboard)
+      wl_keyboard_destroy(input->keyboard);
+
+   wl_list_remove(&input->link);
+   wl_seat_destroy(input->seat);
+   free(input);
+}
+
+static void destroy_inputs(gfx_ctx_wayland_data_t* wl)
+{
+   wayland_input_t *tmp;
+   wayland_input_t *input;
+
+   if(!wl)
+      return;
+
+   wl_list_for_each_safe(input, tmp, &wl->input_list, link)
+   {
+      input_destroy(input);
+   }
+}
 
 static void gfx_ctx_wl_destroy_resources(gfx_ctx_wayland_data_t *wl)
 {
@@ -296,6 +354,8 @@ static void gfx_ctx_wl_destroy_resources(gfx_ctx_wayland_data_t *wl)
       wl_shell_surface_destroy(wl->shell_surf);
    if (wl->surface)
       wl_surface_destroy(wl->surface);
+
+   destroy_inputs(wl);
 
    if (wl->dpy)
    {
@@ -699,6 +759,8 @@ static void *gfx_ctx_wl_init(void *video_driver)
    }
 
    install_sighandlers();
+
+   wl_list_init(&wl->input_list);
 
    wl->registry = wl_display_get_registry(wl->dpy);
    wl_registry_add_listener(wl->registry, &registry_listener, wl);
@@ -1193,33 +1255,40 @@ static const struct wl_pointer_listener pointer_listener = {
 static void seat_handle_capabilities(void *data,
 struct wl_seat *seat, unsigned caps)
 {
-   gfx_ctx_wayland_data_t *wl = (gfx_ctx_wayland_data_t*)data;
+   wayland_input_t *input = (wayland_input_t*)data;
 
-   if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !wl->wl_keyboard)
+   if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !input->keyboard)
    {
-      wl->wl_keyboard = wl_seat_get_keyboard(seat);
-      wl_keyboard_add_listener(wl->wl_keyboard, &keyboard_listener, NULL);
+      input->keyboard = wl_seat_get_keyboard(seat);
+      wl_keyboard_add_listener(input->keyboard, &keyboard_listener, NULL);
    }
-   else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && wl->wl_keyboard)
+   else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && input->keyboard)
    {
-      wl_keyboard_destroy(wl->wl_keyboard);
-      wl->wl_keyboard = NULL;
+      wl_keyboard_destroy(input->keyboard);
+      input->keyboard = NULL;
    }
-   if ((caps & WL_SEAT_CAPABILITY_POINTER) && !wl->wl_pointer)
+   if ((caps & WL_SEAT_CAPABILITY_POINTER) && !input->pointer)
    {
-      wl->wl_pointer = wl_seat_get_pointer(seat);
-      wl_pointer_add_listener(wl->wl_pointer, &pointer_listener, NULL);
+      input->pointer = wl_seat_get_pointer(seat);
+      wl_pointer_add_listener(input->pointer, &pointer_listener, NULL);
    }
-   else if (!(caps & WL_SEAT_CAPABILITY_POINTER) && wl->wl_pointer)
+   else if (!(caps & WL_SEAT_CAPABILITY_POINTER) && input->pointer)
    {
-      wl_pointer_destroy(wl->wl_pointer);
-      wl->wl_pointer = NULL;
+      wl_pointer_destroy(input->pointer);
+      input->pointer = NULL;
    }
+}
+
+static void seat_handle_name(void *data,
+struct wl_seat *seat, const char *name)
+{
+   /* TODO */
 }
 
 /* Seat callbacks - TODO/FIXME */
 static const struct wl_seat_listener seat_listener = {
    seat_handle_capabilities,
+   seat_handle_name,
 };
 
 
