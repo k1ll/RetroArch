@@ -31,6 +31,13 @@
 #include "../input_keymaps.h"
 #include "../input_keyboard.h"
 
+typedef struct
+{
+  bool active;
+  int16_t x;
+  int16_t y;
+} wayland_touch_data_t;
+
 typedef struct wayland_input
 {
    bool blocked;
@@ -39,6 +46,7 @@ typedef struct wayland_input
    int mouse_x, mouse_y;
    int mouse_abs_x, mouse_abs_y;
    int mouse_l, mouse_r, mouse_m, mouse_wu, mouse_wd, mouse_wl, mouse_wr;
+   wayland_touch_data_t touches[MAX_TOUCHES];
 } wayland_input_t;
 
 static void *wayland_input_init(void)
@@ -164,7 +172,37 @@ static int16_t wayland_pointer_device_state(wayland_input_t *wayland,
    bool valid, inside;
    int16_t res_x = 0, res_y = 0, res_screen_x = 0, res_screen_y = 0;
 
-   /* TODO */
+   if (idx > MAX_TOUCHES)
+      return 0;
+
+   valid = input_translate_coord_viewport(wayland->touches[idx].x, wayland->touches[idx].y,
+         &res_x, &res_y, &res_screen_x, &res_screen_y);
+
+   if (!valid)
+      return 0;
+
+   if (screen)
+   {
+      res_x = res_screen_x;
+      res_y = res_screen_y;
+   }
+
+   inside = (res_x >= -0x7fff) && (res_y >= -0x7fff);
+
+   if (!inside)
+      return 0;
+
+   switch (id)
+   {
+      case RETRO_DEVICE_ID_POINTER_X:
+         return res_x;
+      case RETRO_DEVICE_ID_POINTER_Y:
+         return res_y;
+      case RETRO_DEVICE_ID_POINTER_PRESSED:
+      {
+         return wayland->touches[idx].active;
+      }
+   }
 
    return 0;
 }
@@ -253,9 +291,38 @@ static const input_device_driver_t *wayland_get_joypad_driver(void *data)
    return wayland->joypad;
 }
 
+static void wayland_poll_mouse(wayland_input_t *wayland)
+{
+}
+
+static void wayland_poll_touch(wayland_input_t *wayland)
+{
+   unsigned touch_x;
+   unsigned touch_y;
+
+   for (int id=0;id<MAX_TOUCHES;id++)
+   {
+     if(wayland_context_gettouchpos(id, &touch_x, &touch_y))
+     {
+       wayland->touches[id].active = true;
+     }
+     else
+     {
+       wayland->touches[id].active = false;
+     }
+     wayland->touches[id].x = touch_x;
+     wayland->touches[id].y = touch_y;
+   }
+}
+
+//Polling doesn't really make sense in wayland land but 
+//let's just got with it for getting our data from the 
+//video context :)
 static void wayland_input_poll(void *data)
 {
    wayland_input_t *wayland = (wayland_input_t*)data;
+   //TODO: Only poll if we have a seat with a touch device?
+   wayland_poll_touch(wayland);
 }
 
 static uint64_t wayland_get_capabilities(void *data)

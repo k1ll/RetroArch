@@ -124,6 +124,7 @@ typedef struct wayland_input
    struct wl_seat *seat;
    struct wl_keyboard *keyboard;
    struct wl_pointer  *pointer;
+   struct wl_touch *touch;
    struct xkb_context *xkb_context;
    struct {
            struct xkb_keymap *keymap;
@@ -156,6 +157,27 @@ static void install_sighandlers(void)
    sigemptyset(&sa.sa_mask);
    sigaction(SIGINT, &sa, NULL);
    sigaction(SIGTERM, &sa, NULL);
+}
+
+typedef struct touch_pos
+{
+  bool active;
+  int32_t id;
+  unsigned x;
+  unsigned y;
+} touch_pos_t;
+
+int num_active_touches;
+touch_pos_t active_touch_positions[MAX_TOUCHES];
+
+bool wayland_context_gettouchpos(unsigned id, unsigned* touch_x, unsigned* touch_y)
+{
+  if (id >= MAX_TOUCHES)
+    return false;
+
+  *touch_x = active_touch_positions[id].x;
+  *touch_y = active_touch_positions[id].y;
+  return active_touch_positions[id].active;
 }
 
 /* Shell surface callbacks. */
@@ -273,6 +295,8 @@ static void input_destroy(wayland_input_t *input)
    if (!input)
       return;
 
+   if (input->touch)
+      wl_touch_destroy(input->touch);
    if (input->pointer)
       wl_pointer_destroy(input->pointer);
    if (input->keyboard)
@@ -844,6 +868,16 @@ static void *gfx_ctx_wl_init(void *video_driver)
       case GFX_CTX_NONE:
       default:
          break;
+   }
+
+   num_active_touches = 0;
+
+   for (int i=0;i<MAX_TOUCHES;i++)
+   {
+       active_touch_positions[i].active = false;
+       active_touch_positions[i].id = -1;
+       active_touch_positions[i].x = (unsigned) 0;
+       active_touch_positions[i].y = (unsigned) 0;
    }
 
    return wl;
@@ -1625,6 +1659,130 @@ static const struct wl_pointer_listener pointer_listener = {
    pointer_handle_axis,
 };
 
+static void touch_handle_down(void *data,
+struct wl_touch *wl_touch,
+uint32_t serial,
+uint32_t time,
+struct wl_surface *surface,
+int32_t id,
+wl_fixed_t x,
+wl_fixed_t y)
+{
+   if (num_active_touches < MAX_TOUCHES)
+   {
+     for (int i=0;i<MAX_TOUCHES;i++)
+     {
+       // Use next empty slot
+       if (!active_touch_positions[i].active)
+       {
+         active_touch_positions[num_active_touches].active = true;
+         active_touch_positions[num_active_touches].id = id;
+         active_touch_positions[num_active_touches].x = (unsigned) wl_fixed_to_int(x);
+         active_touch_positions[num_active_touches].y = (unsigned) wl_fixed_to_int(y);
+         num_active_touches++;
+         break;
+       }
+     }
+   }
+}
+
+static void reorder_touches()
+{
+   if (num_active_touches == 0)
+      return;
+
+   for (int i=0;i<MAX_TOUCHES;i++)
+   {
+      if (!active_touch_positions[i].active)
+      {
+         for (int j=i+1;j<MAX_TOUCHES;j++)
+         {
+            if (active_touch_positions[j].active)
+            {
+               active_touch_positions[i].active = active_touch_positions[j].active;
+               active_touch_positions[i].id = active_touch_positions[j].id;
+               active_touch_positions[i].x = active_touch_positions[j].x;
+               active_touch_positions[i].y = active_touch_positions[j].y;
+
+               active_touch_positions[j].active = false;
+               active_touch_positions[j].id = -1;
+               active_touch_positions[j].x = (unsigned) 0;
+               active_touch_positions[j].y = (unsigned) 0;
+               break;
+            }
+            if (j == MAX_TOUCHES)
+               return;
+         }
+      }
+   }
+}
+
+static void touch_handle_up(void *data,
+struct wl_touch *wl_touch,
+uint32_t serial,
+uint32_t time,
+int32_t id)
+{
+   for (int i=0;i<MAX_TOUCHES;i++)
+   {
+     if (active_touch_positions[i].active && active_touch_positions[i].id == id)
+     {
+       active_touch_positions[i].active = false;
+       active_touch_positions[i].id = -1;
+       active_touch_positions[i].x = (unsigned) 0;
+       active_touch_positions[i].y = (unsigned) 0;
+       num_active_touches--;
+     }
+   }
+   reorder_touches();
+}
+
+static void touch_handle_motion(void *data,
+struct wl_touch *wl_touch,
+uint32_t time,
+int32_t id,
+wl_fixed_t x,
+wl_fixed_t y)
+{
+   for (int i=0;i<MAX_TOUCHES;i++)
+   {
+     if (active_touch_positions[i].active && active_touch_positions[i].id == id)
+     {
+       active_touch_positions[i].x = (unsigned) wl_fixed_to_int(x);
+       active_touch_positions[i].y = (unsigned) wl_fixed_to_int(y);
+     }
+   }
+}
+
+static void touch_handle_frame(void *data,
+struct wl_touch *wl_touch)
+{
+   /* TODO */
+}
+
+static void touch_handle_cancel(void *data,
+struct wl_touch *wl_touch)
+{
+   //If i understand the spec correctly we have to reset all touches here
+   //since they were not ment for us anyway
+   for (int i=0;i<MAX_TOUCHES;i++)
+   {
+       active_touch_positions[i].active = false;
+       active_touch_positions[i].id = -1;
+       active_touch_positions[i].x = (unsigned) 0;
+       active_touch_positions[i].y = (unsigned) 0;
+   }
+   num_active_touches = 0;
+}
+
+static const struct wl_touch_listener touch_listener = {
+   touch_handle_down,
+   touch_handle_up,
+   touch_handle_motion,
+   touch_handle_frame,
+   touch_handle_cancel,
+};
+
 static void seat_handle_capabilities(void *data,
 struct wl_seat *seat, unsigned caps)
 {
@@ -1649,6 +1807,16 @@ struct wl_seat *seat, unsigned caps)
    {
       wl_pointer_destroy(input->pointer);
       input->pointer = NULL;
+   }
+   if ((caps & WL_SEAT_CAPABILITY_TOUCH) && !input->touch)
+   {
+      input->touch = wl_seat_get_touch(seat);
+      wl_touch_add_listener(input->touch, &touch_listener, input);
+   }
+   else if (!(caps & WL_SEAT_CAPABILITY_TOUCH) && input->touch)
+   {
+      wl_touch_destroy(input->touch);
+      input->touch = NULL;
    }
 }
 

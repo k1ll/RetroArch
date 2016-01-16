@@ -17,5 +17,10 @@
 #ifndef __VIDEO_CONTEXT_DRIVER_WAYLAND_H
 #define __VIDEO_CONTEXT_DRIVER_WAYLAND_H
    #include "libretro.h"
+   enum
+   {
+     MAX_TOUCHES = 16
+   };
+   bool wayland_context_gettouchpos(unsigned id, unsigned* touch_x, unsigned* touch_y);
    bool wl_key_state[RETROK_LAST];
 #endif
