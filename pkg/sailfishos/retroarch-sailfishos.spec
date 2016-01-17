@@ -51,6 +51,12 @@ sed -i \
    s|^# input_driver.*|input_driver = "wayland"|' \
   %{buildroot}/etc/retroarch.cfg
 
+%ifarch armv7hl
+sed -i \
+  's|^# core_updater_buildbot_url.*|core_updater_buildbot_url = "http://buildbot.libretro.com/nightly/linux/armhf/latest/"|;' \
+  %{buildroot}/etc/retroarch.cfg
+%endif
+
 #Disabling audio till it's fixed
 sed -i \
    's|^# audio_enable.*|audio_enable = "false"|' \
