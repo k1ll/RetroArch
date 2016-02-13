@@ -42,18 +42,18 @@ make %{?_smp_mflags}
 make install DESTDIR=%{buildroot}
 # Configuration changes
 sed -i \
-  's|^# libretro_directory.*|libretro_directory = "/usr/libexec/libretro"|;
-   s|^# libretro_info_path.*|libretro_info_path = "/usr/libexec/libretro"|;
-   s|^# joypad_autoconfig_dir.*|joypad_autoconfig_dir = "/etc/retroarch/joypad"|;
-   s|^# video_fullscreen.*|video_fullscreen = "true"|;
-   s|^# menu_driver.*|menu_driver = "glui"|;
-   s|^# menu_pointer_enable.*|menu_pointer_enable = "true"|;
-   s|^# input_driver.*|input_driver = "wayland"|' \
+  's|^# libretro_directory =.*|libretro_directory = "/usr/libexec/libretro"|;
+   s|^# libretro_info_path =.*|libretro_info_path = "/usr/libexec/libretro"|;
+   s|^# joypad_autoconfig_dir =.*|joypad_autoconfig_dir = "/etc/retroarch/joypad"|;
+   s|^# video_fullscreen =.*|video_fullscreen = "true"|;
+   s|^# menu_driver =.*|menu_driver = "glui"|;
+   s|^# menu_pointer_enable =.*|menu_pointer_enable = "true"|;
+   s|^# input_driver =.*|input_driver = "wayland"|' \
   %{buildroot}/etc/retroarch.cfg
 
 %ifarch armv7hl
 sed -i \
-  's|^# core_updater_buildbot_url.*|core_updater_buildbot_url = "http://buildbot.libretro.com/nightly/linux/armhf/latest/"|;' \
+  's|^# core_updater_buildbot_url =.*|core_updater_buildbot_url = "http://buildbot.libretro.com/nightly/linux/armhf/latest/"|;' \
   %{buildroot}/etc/retroarch.cfg
 %endif
 
