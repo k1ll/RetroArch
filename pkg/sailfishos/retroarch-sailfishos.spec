@@ -42,8 +42,8 @@ make %{?_smp_mflags}
 make install DESTDIR=%{buildroot}
 # Configuration changes
 sed -i \
-  's|^# libretro_directory =.*|libretro_directory = "/usr/libexec/libretro"|;
-   s|^# libretro_info_path =.*|libretro_info_path = "/usr/libexec/libretro"|;
+  's|^# libretro_directory =.*|libretro_directory = "~/.config/retroarch/cores/"|;
+   s|^# libretro_info_path =.*|libretro_info_path = "~/.config/retroarch/cores/"|;
    s|^# joypad_autoconfig_dir =.*|joypad_autoconfig_dir = "/etc/retroarch/joypad"|;
    s|^# video_fullscreen =.*|video_fullscreen = "true"|;
    s|^# menu_driver =.*|menu_driver = "glui"|;
