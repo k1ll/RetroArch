@@ -628,7 +628,10 @@ ifeq ($(HAVE_GL_CONTEXT), 1)
    endif
 
    ifeq ($(HAVE_WAYLAND), 1)
-	OBJ += gfx/drivers_context/wayland_ctx.o
+      OBJ += gfx/drivers_context/wayland_ctx.o
+      ifeq ($(HAVE_EGL), 1)
+           LIBS += $(EGL_LIBS)
+      endif
    endif
 
    ifeq ($(HAVE_GLES), 1)
